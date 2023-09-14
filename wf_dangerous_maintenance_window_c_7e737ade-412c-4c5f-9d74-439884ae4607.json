@@ -1,0 +1,43 @@
+{
+  "id": "7e737ade-412c-4c5f-9d74-439884ae4607",
+  "title": "Dangerous Maintenance Window Checker",
+  "description": "",
+  "tasks": {
+    "check_maintenance_windows": {
+      "name": "check_maintenance_windows",
+      "description": "Build a custom task running js Code",
+      "action": "dynatrace.automations:run-javascript",
+      "input": {
+        "script": "import { execution } from '@dynatrace-sdk/automation-utils';\nimport { EventIngest, EventIngestEventType, eventsClient, settingsObjectsClient } from '@dynatrace-sdk/client-classic-environment-v2'\n  \nexport default async function ({ execution_id }) {\n  \n  const ex = await execution(execution_id);\n  // Define valid timezone here\n  const TZ = \"GB\";\n  // Problem timeout duration, should match execution interval\n  const TIMEOUT = 15;\n  // Valid tags\n  const TAGS = [\"SVCOFF\", \"Department\"];\n  \n  // Get maintenance window configs from Dynatrace SDK\n  var response = await settingsObjectsClient.getSettingsObjects({\n    schemaIds: \"builtin:alerting.maintenance-window\",\n    scopes: \"environment\",\n    fields: \"objectId,value\"\n  })\n\n  function verifyTimezone(objTZ, tz=TZ) {\n    return objTZ != TZ\n  }\n\n  // Verify if tags included are in TAGS const\n  function verifyFilters(obj, tags=TAGS) {\n    let hasTag = false\n    if (obj.length) {\n      for(let filter of obj) {\n        for(let tag of tags) {\n          if(filter.entityTags.includes(tag)){\n            hasTag = true\n          }\n        }\n        if(filter.managementZones) {\n          hasTag = true\n        }\n      }\n    }\n    return !hasTag\n  }\n\n  // Extract timezone data from a variable JSON path\n  function extractTimezone(obj) {\n    let timeZone = \"undefined\"\n    if (obj.value.schedule.weeklyRecurrence) {\n      timeZone = obj.value.schedule.weeklyRecurrence.timeWindow.timeZone;\n    } else if (obj.value.schedule.onceRecurrence) {\n      timeZone = obj.value.schedule.onceRecurrence.timeZone;\n    } else if (obj.value.schedule.dailyRecurrence) {\n      timeZone = obj.value.schedule.dailyRecurrence.timeWindow.timeZone;\n    } else if (obj.value.schedule.monthlyRecurrence) {\n      timeZone = obj.value.schedule.monthlyRecurrence.timeWindow.timeZone;\n    }\n    return timeZone\n  }\n\n  // Verify the maintenance window's end date is not in the past\n  function verifyActive(obj) {\n    let timeZone = true\n    if (obj.value.schedule.weeklyRecurrence) {\n      timeZone = isDateInFuture(obj.value.schedule.weeklyRecurrence.recurrenceRange.scheduleEndDate);\n    } else if (obj.value.schedule.onceRecurrence) {\n      timeZone = isDateInFuture(obj.value.schedule.onceRecurrence.endTime);\n    } else if (obj.value.schedule.dailyRecurrence) {\n      timeZone = isDateInFuture(obj.value.schedule.dailyRecurrence.recurrenceRange.scheduleEndDate);\n    } else if (obj.value.schedule.monthlyRecurrence) {\n      timeZone = isDateInFuture(obj.value.schedule.monthlyRecurrence.recurrenceRange.scheduleEndDate);\n    }\n    return timeZone\n  }\n\n  // Determine if a date is in the future\n  function isDateInFuture(date) {\n    const inputDate = new Date(date);\n\n    // Get the current date and time\n    const currentDate = new Date();\n    \n    return inputDate >= currentDate;\n  }\n\n  // Iterate through maintenance windows\n  function checkWindows(response) {\n    for(let item of response.items){\n      if(item.value.enabled && verifyActive(item)){\n        // Store filters\n        let filters = item.value.filters\n        let timeZone = extractTimezone(item);\n        let problemPayload = \"\"\n        \n        if (verifyTimezone(timeZone)) {\n          let message = `Invalid timezone: ${timeZone}, should be ${TZ}. `\n          problemPayload = problemPayload + message\n        }\n  \n        if (verifyFilters(filters)) {\n          let message = `Invalid filters defined, the filter should contain a SVCOFF tag, a Department tag, or a Management zone. `\n          problemPayload = problemPayload + message\n        }\n  \n        if (problemPayload) {\n          let event: EventIngest = {\n            eventType: EventIngestEventType.CustomAlert,\n            title: `Dangerous maintenance window \"${item.value.generalProperties.name}\"`,\n            timeout: TIMEOUT,\n            properties: { 'name': `${item.value.generalProperties.name}`,\n                          'timezone': `${timeZone}`,\n                          'filters': `${JSON.stringify(filters)}`,\n                          'message': `${problemPayload}`,\n                          // 'disables synthetics': `${item.value.generalProperties.disableSyntheticMonitorExecution}`\n                          },\n          };\n          \n          eventsClient.createEvent({ body: event });\n          console.log(\"Problem generated.\")\n          console.log(event)\n        }\n      }\n    }\n  }\n  // Check windows with API response data\n  checkWindows(response)\n\n  // Cycle through next pages for large sets of maintenance windows\n  while(response.nextPageKey) {\n    console.log(\"Moving to next page\")\n    let next = response.nextPageKey\n    response = await settingsObjectsClient.getSettingsObjects({\n      nextPageKey: next\n  })\n    checkWindows(response)\n  }\n\n  return { response };\n}"
+      },
+      "position": {
+        "x": 0,
+        "y": 1
+      },
+      "predecessors": []
+    }
+  },
+  "actor": "19c20d32-2db5-489d-afe4-775aaaa4d840",
+  "owner": "19c20d32-2db5-489d-afe4-775aaaa4d840",
+  "ownerType": "USER",
+  "isPrivate": true,
+  "trigger": {
+    "schedule": {
+      "rule": null,
+      "trigger": {
+        "type": "interval",
+        "intervalMinutes": 15
+      },
+      "timezone": "Europe/London",
+      "isActive": true,
+      "isFaulty": false,
+      "nextExecution": "2023-09-13T22:30:00.000Z",
+      "filterParameters": {
+        "earliestStart": "2023-08-17",
+        "earliestStartTime": "00:00"
+      },
+      "inputs": {}
+    }
+  },
+  "schemaVersion": 3
+}
